@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaborative Whiteboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #e2e8f0;
+            color: #2d3748;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 100%;
+            max-width: 1000px;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        h1 {
+            color: #2c5282;
+            margin-bottom: 20px;
+            font-size: 2.5em;
+            text-align: center;
+        }
+        #controls {
+            background-color: #ffffff;
+            padding: 15px 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            justify-content: center;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        label {
+            font-weight: bold;
+            font-size: 0.9em;
+            color: #4a5568;
+        }
+        input[type="color"] {
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            width: 40px;
+            height: 40px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            padding: 0;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 5px; }
+        input[type="color"]::-moz-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-moz-color-swatch { border: none; border-radius: 5px; }
+        input[type="range"] {
+            width: 100px;
+            cursor: pointer;
+        }
+        .tool-button, #clear-canvas-button {
+            padding: 10px 15px;
+            background-color: #4299e1;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: bold;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        .tool-button:hover, #clear-canvas-button:hover {
+            background-color: #3182ce;
+            transform: translateY(-1px);
+        }
+        .tool-button.active {
+            background-color: #2c5282;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        #clear-canvas-button {
+            background-color: #e53e3e;
+        }
+        #clear-canvas-button:hover {
+            background-color: #c53030;
+        }
+
+        canvas {
+            border: 2px solid #a0aec0;
+            background-color: white;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.15);
+            display: block;
+            max-width: 100%;
+            height: auto;
+            border-radius: 12px;
+        }
+
+        @media (max-width: 768px) {
+            #controls {
+                flex-direction: column;
+                gap: 10px;
+                padding: 10px;
+            }
+            .control-group {
+                width: 100%;
+                justify-content: space-between;
+            }
+            input[type="range"] {
+                width: 150px;
+            }
+            h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Collaborative Whiteboard</h1>
+
+        <div id="controls">
+            <div class="control-group">
+                <label for="color-picker">Color:</label>
+                <input type="color" id="color-picker" value="#000000">
+            </div>
+            <div class="control-group">
+                <label for="thickness-slider">Size:</label>
+                <input type="range" id="thickness-slider" min="1" max="50" value="5">
+            </div>
+            <div class="control-group">
+                <button class="tool-button active" data-tool="marker">Marker</button>
+                <button class="tool-button" data-tool="highlighter">Highlighter</button>
+                <button class="tool-button" data-tool="brush">Brush</button>
+                <button class="tool-button" data-tool="eraser">Eraser</button>
+            </div>
+            <div class="control-group">
+                <button id="clear-canvas-button">Clear Canvas</button>
+            </div>
+        </div>
+
+        <canvas id="whiteboard-canvas"></canvas>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <script>
+        const canvas = document.getElementById('whiteboard-canvas');
+        const ctx = canvas.getContext('2d');
+        const colorPicker = document.getElementById('color-picker');
+        const thicknessSlider = document.getElementById('thickness-slider');
+        const toolButtons = document.querySelectorAll('.tool-button');
+        const clearCanvasButton = document.getElementById('clear-canvas-button');
+
+        // IMPORTANT: Replace this with YOUR Whiteboard Backend Render service URL!
+        // This URL is what you copied from Render after deploying your backend in Part 1.
+        const SERVER_URL = 'https://main-canvas.onrender.com'; 
+
+        let drawing = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        let currentColor = colorPicker.value;
+        let currentThickness = parseInt(thicknessSlider.value);
+        let currentTool = 'marker';
+
+        // Connect to the Socket.IO server
+        const socket = io(SERVER_URL); // Connect to the specific backend URL
+
+        // --- Canvas Initialization ---
+        function initializeCanvas() {
+            canvas.width = 800;
+            canvas.height = 600;
+
+            const containerWidth = canvas.parentElement.offsetWidth;
+            const aspectRatio = canvas.width / canvas.height;
+            let displayWidth = Math.min(containerWidth, 800);
+            let displayHeight = displayWidth / aspectRatio;
+
+            if (displayHeight > window.innerHeight * 0.7) {
+                displayHeight = window.innerHeight * 0.7;
+                displayWidth = displayHeight * aspectRatio;
+            }
+
+            canvas.style.width = `${displayWidth}px`;
+            canvas.style.height = `${displayHeight}px`;
+
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = currentColor;
+            ctx.lineWidth = currentThickness;
+        }
+
+        window.onload = initializeCanvas;
+        window.onresize = initializeCanvas;
+
+        // --- Socket.IO Event Listeners ---
+        socket.on('connect', () => {
+            console.log('Connected to whiteboard server!');
+        });
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server.');
+        });
+        socket.on('drawingData', (data) => {
+            drawStroke(data);
+        });
+        socket.on('clearCanvas', () => {
+            clearCanvasLocal();
+        });
+
+        // --- Drawing Logic (remains the same) ---
+        function getCanvasCoordinates(event) {
+            const rect = canvas.getBoundingClientRect();
+            let clientX, clientY;
+            if (event.touches && event.touches.length > 0) {
+                clientX = event.touches[0].clientX;
+                clientY = event.touches[0].clientY;
+            } else {
+                clientX = event.clientX;
+                clientY = event.clientY;
+            }
+            const x = (clientX - rect.left) * (canvas.width / rect.width);
+            const y = (clientY - rect.top) * (canvas.height / rect.height);
+            return [x, y];
+        }
+
+        function startDrawing(e) {
+            drawing = true;
+            [lastX, lastY] = getCanvasCoordinates(e);
+            if (currentTool === 'brush' || currentTool === 'marker' || currentTool === 'highlighter' || currentTool === 'eraser') {
+                const data = { x1: lastX, y1: lastY, x2: lastX, y2: lastY, color: currentColor, thickness: currentThickness, tool: currentTool, erase: currentTool === 'eraser' };
+                drawStroke(data);
+                socket.emit('drawingData', data);
+            }
+        }
+
+        function draw(e) {
+            if (!drawing) return;
+            const [currentX, currentY] = getCanvasCoordinates(e);
+            const data = { x1: lastX, y1: lastY, x2: currentX, y2: currentY, color: currentColor, thickness: currentThickness, tool: currentTool, erase: currentTool === 'eraser' };
+            drawStroke(data);
+            socket.emit('drawingData', data);
+            [lastX, lastY] = [currentX, currentY];
+        }
+
+        function stopDrawing() {
+            drawing = false;
+        }
+
+        function drawStroke(data) {
+            ctx.beginPath();
+            ctx.save();
+            if (data.erase) {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = data.thickness + 5;
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = data.color;
+                ctx.lineWidth = data.thickness;
+                if (data.tool === 'highlighter') {
+                    ctx.globalAlpha = 0.3;
+                } else {
+                    ctx.globalAlpha = 1.0;
+                }
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+            }
+            ctx.moveTo(data.x1, data.y1);
+            ctx.lineTo(data.x2, data.y2);
+            ctx.stroke();
+            ctx.closePath();
+            ctx.restore();
+        }
+
+        function clearCanvasLocal() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // --- Event Listeners for User Interactions (remains the same) ---
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+        canvas.addEventListener('touchstart', (e) => { e.preventDefault(); startDrawing(e); }, { passive: false });
+        canvas.addEventListener('touchmove', (e) => { e.preventDefault(); draw(e); }, { passive: false });
+        canvas.addEventListener('touchend', stopDrawing);
+        canvas.addEventListener('touchcancel', stopDrawing);
+        colorPicker.addEventListener('input', (e) => {
+            currentColor = e.target.value;
+            if (currentTool === 'eraser') {
+                document.querySelector('.tool-button[data-tool="marker"]').click();
+            }
+        });
+        thicknessSlider.addEventListener('input', (e) => {
+            currentThickness = parseInt(e.target.value);
+        });
+        toolButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                toolButtons.forEach(btn => btn.classList.remove('active'));
+                button.classList.add('active');
+                currentTool = button.dataset.tool;
+                if (currentTool !== 'eraser') {
+                    ctx.globalCompositeOperation = 'source-over';
+                }
+            });
+        });
+        clearCanvasButton.addEventListener('click', () => {
+            if (confirm('Are you sure you want to clear the canvas for everyone? This cannot be undone.')) {
+                clearCanvasLocal();
+                socket.emit('clearCanvas');
+            }
+        });
+    </script>
+</body>
+</html>
